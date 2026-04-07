@@ -1,0 +1,19 @@
+[package]
+name = "d-note"
+version = "0.1.0"
+edition = "2024"
+description = "A terminal sticky note app — top-right panel with todos, show/hide, stored in ~/notes.md"
+license = "MIT"
+repository = "https://github.com/YOUR_USERNAME/d-note"
+keywords = ["tui", "notes", "todo", "terminal", "sticky"]
+categories = ["command-line-utilities"]
+readme = "README.md"
+
+[[bin]]
+name = "d-note"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+chrono = "0.4"
