@@ -101,10 +101,17 @@ fn parse_notes(content: &str) -> Vec<Note> {
         if block.is_empty() {
             continue;
         }
-        let mut lines = block.lines();
-        let title_line = lines.next().unwrap_or("").trim();
-        let title = title_line.trim_start_matches("## ").to_string();
-        if title.is_empty() || title.starts_with('#') {
+        // Find the first `## ` heading — skips any `# file-level` headers
+        let mut lines = block.lines().peekable();
+        let mut title = String::new();
+        for line in lines.by_ref() {
+            let t = line.trim();
+            if t.starts_with("## ") {
+                title = t.trim_start_matches("## ").to_string();
+                break;
+            }
+        }
+        if title.is_empty() {
             continue;
         }
         let mut created_at = String::new();
@@ -129,7 +136,7 @@ fn parse_notes(content: &str) -> Vec<Note> {
 
 fn save_notes(notes: &[Note]) {
     let path = notes_path();
-    let mut content = String::from("# Sticky Notes\n\n");
+    let mut content = String::new();
     for note in notes {
         content.push_str(&format!("## {}\n", note.title));
         content.push_str(&format!("_{}_\n\n", note.created_at));
