@@ -41,12 +41,6 @@ It auto-detects your environment:
 | xterm / X11 | New window anchored top-right |
 | alacritty, gnome-terminal, konsole | New window |
 
-**tmux keybinding** — open d-note with `Prefix + u`:
-
-```bash
-echo "bind u run-shell 'tmux popup -x #{window_width} -y 0 -w 52 -h 34 -E d-note'" >> ~/.tmux.conf
-tmux source-file ~/.tmux.conf
-```
 
 ## Keys
 
