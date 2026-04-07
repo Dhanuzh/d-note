@@ -574,8 +574,15 @@ fn render_input_title(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .border_style(style_input_active());
     let inner = blk.inner(chunks[0]);
     f.render_widget(blk, chunks[0]);
-    f.render_widget(Paragraph::new(app.input.as_str()), inner);
-    f.set_cursor_position((inner.x + app.input.len() as u16, inner.y));
+    // scroll text left so cursor is always visible
+    let w = inner.width as usize;
+    let visible = if app.input.len() >= w {
+        &app.input[app.input.len() + 1 - w..]
+    } else {
+        &app.input
+    };
+    f.render_widget(Paragraph::new(visible), inner);
+    f.set_cursor_position((inner.x + visible.len().min(w) as u16, inner.y));
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
