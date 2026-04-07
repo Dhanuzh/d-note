@@ -13,6 +13,7 @@ if [ -n "$TMUX" ]; then
         -y 0 \
         -w $W \
         -h $H \
+        -b none \
         -E "d-note"
     exit 0
 fi

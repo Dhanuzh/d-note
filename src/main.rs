@@ -310,18 +310,19 @@ fn sticky_rect(area: Rect) -> Rect {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-fn style_base() -> Style     { Style::default().fg(Color::Reset).bg(Color::Reset) }
-fn style_border() -> Style   { Style::default().fg(Color::Cyan) }
-fn style_title() -> Style    { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) }
-fn style_dim() -> Style      { Style::default().fg(Color::DarkGray) }
-fn style_selected() -> Style { Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD) }
-fn style_done() -> Style     { Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM) }
-fn style_checked() -> Style  { Style::default().fg(Color::Green).add_modifier(Modifier::DIM) }
-fn style_key() -> Style      { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) }
-fn style_input() -> Style    { Style::default().fg(Color::Blue) }
-fn style_success() -> Style  { Style::default().fg(Color::Green) }
-fn style_error() -> Style    { Style::default().fg(Color::Red) }
-fn style_highlight() -> Style { Style::default().add_modifier(Modifier::REVERSED) }
+fn style_base() -> Style      { Style::default().fg(Color::Reset).bg(Color::Reset) }
+fn style_border() -> Style    { Style::default().fg(Color::DarkGray) }
+fn style_title() -> Style     { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) }
+fn style_dim() -> Style       { Style::default().fg(Color::DarkGray) }
+// white bg + black text: no colour inversion surprises with coloured badges
+fn style_selected() -> Style  { Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD) }
+fn style_done() -> Style      { Style::default().fg(Color::DarkGray) }
+fn style_checked() -> Style   { Style::default().fg(Color::Green) }
+fn style_key() -> Style       { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) }
+fn style_input() -> Style     { Style::default().fg(Color::Cyan) }
+fn style_success() -> Style   { Style::default().fg(Color::Green) }
+fn style_error() -> Style     { Style::default().fg(Color::Red) }
+fn style_highlight() -> Style { Style::default().fg(Color::Black).bg(Color::White) }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
@@ -386,9 +387,9 @@ fn render_list(f: &mut ratatui::Frame, app: &App, area: Rect) {
         let items: Vec<ListItem> = app.notes.iter().map(|n| {
             // note-level status badge: [x] done, [ ] pending
             let (badge, badge_style) = if n.done {
-                ("[x] ", Style::default().fg(Color::Green).add_modifier(Modifier::DIM))
+                ("[x] ", Style::default().fg(Color::Green))
             } else {
-                ("[ ] ", style_dim())
+                ("[ ] ", Style::default()) // terminal default — stays visible when selected (white bg)
             };
 
             let title_style = if n.done { style_done() } else { style_base() };
