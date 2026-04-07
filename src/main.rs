@@ -8,9 +8,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
-    },
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Terminal,
 };
 use std::{
@@ -20,7 +18,7 @@ use std::{
 };
 use chrono::Local;
 
-// ── Checkbox helpers ──────────────────────────────────────────────────────────
+// ── Checkbox helpers (body-level) ─────────────────────────────────────────────
 
 fn is_todo_unchecked(line: &str) -> bool {
     let t = line.trim();
@@ -64,6 +62,7 @@ struct Note {
     title: String,
     body: String,
     created_at: String,
+    done: bool,   // note-level completion status
 }
 
 impl Note {
@@ -73,6 +72,7 @@ impl Note {
             title,
             body,
             created_at: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+            done: false,
         }
     }
 }
@@ -96,13 +96,15 @@ fn load_notes() -> Vec<Note> {
 fn parse_notes(content: &str) -> Vec<Note> {
     let mut notes = Vec::new();
     let mut id = 1;
+
     for block in content.split("\n---\n") {
         let block = block.trim();
         if block.is_empty() {
             continue;
         }
-        // Find the first `## ` heading — skips any `# file-level` headers
-        let mut lines = block.lines().peekable();
+
+        // scan forward for the first `## ` heading, skip file-level headers
+        let mut lines = block.lines();
         let mut title = String::new();
         for line in lines.by_ref() {
             let t = line.trim();
@@ -114,21 +116,35 @@ fn parse_notes(content: &str) -> Vec<Note> {
         if title.is_empty() {
             continue;
         }
+
+        // parse metadata lines (_date_, _done_) then body
         let mut created_at = String::new();
+        let mut done = false;
         let mut body_lines: Vec<&str> = Vec::new();
         let mut past_meta = false;
+
         for line in lines {
-            if !past_meta && line.starts_with('_') && line.ends_with('_') {
-                created_at = line.trim_matches('_').to_string();
-                past_meta = true;
-            } else if line.is_empty() && !past_meta {
-                past_meta = true;
+            if !past_meta {
+                if line.starts_with('_') && line.ends_with('_') && line.len() > 1 {
+                    let meta = line.trim_matches('_');
+                    if meta == "done" {
+                        done = true;
+                    } else {
+                        created_at = meta.to_string();
+                    }
+                } else if line.is_empty() {
+                    past_meta = true;
+                } else {
+                    past_meta = true;
+                    body_lines.push(line);
+                }
             } else {
                 body_lines.push(line);
             }
         }
+
         let body = body_lines.join("\n").trim().to_string();
-        notes.push(Note { id, title, body, created_at });
+        notes.push(Note { id, title, body, created_at, done });
         id += 1;
     }
     notes
@@ -139,7 +155,11 @@ fn save_notes(notes: &[Note]) {
     let mut content = String::new();
     for note in notes {
         content.push_str(&format!("## {}\n", note.title));
-        content.push_str(&format!("_{}_\n\n", note.created_at));
+        content.push_str(&format!("_{}_\n", note.created_at));
+        if note.done {
+            content.push_str("_done_\n");
+        }
+        content.push('\n');
         content.push_str(&note.body);
         content.push_str("\n\n---\n\n");
     }
@@ -170,7 +190,6 @@ struct App {
     temp_title: String,
     temp_body: String,
     status_msg: String,
-    // view mode: which body line the cursor is on
     view_line: usize,
 }
 
@@ -200,6 +219,18 @@ impl App {
 
     fn next_id(&self) -> usize {
         self.notes.iter().map(|n| n.id).max().unwrap_or(0) + 1
+    }
+
+    fn toggle_done(&mut self) {
+        if let Some(i) = self.list_state.selected() {
+            self.notes[i].done = !self.notes[i].done;
+            save_notes(&self.notes);
+            self.status_msg = if self.notes[i].done {
+                "Marked complete.".into()
+            } else {
+                "Marked incomplete.".into()
+            };
+        }
     }
 
     fn delete_selected(&mut self) {
@@ -258,11 +289,7 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(li, l)| {
-                        if li == self.view_line {
-                            toggle_todo(l)
-                        } else {
-                            l.clone()
-                        }
+                        if li == self.view_line { toggle_todo(l) } else { l.clone() }
                     })
                     .collect();
                 self.notes[i].body = new_lines.join("\n");
@@ -281,61 +308,29 @@ fn sticky_rect(area: Rect) -> Rect {
     Rect::new(x, 0, width.min(area.width), height.min(area.height))
 }
 
-// ── Styles (terminal-theme-aware) ─────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 
-fn style_base() -> Style {
-    Style::default().fg(Color::Reset).bg(Color::Reset)
-}
-fn style_border() -> Style {
-    Style::default().fg(Color::Cyan)
-}
-fn style_title() -> Style {
-    Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
-}
-fn style_dim() -> Style {
-    Style::default().fg(Color::DarkGray)
-}
-fn style_selected() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD)
-}
-fn style_checked() -> Style {
-    Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::DIM)
-}
-fn style_unchecked() -> Style {
-    Style::default().fg(Color::Reset)
-}
-fn style_highlight_line() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
-}
-fn style_key() -> Style {
-    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-}
-fn style_input_active() -> Style {
-    Style::default().fg(Color::Blue)
-}
-fn style_success() -> Style {
-    Style::default().fg(Color::Green)
-}
-fn style_error() -> Style {
-    Style::default().fg(Color::Red)
-}
+fn style_base() -> Style     { Style::default().fg(Color::Reset).bg(Color::Reset) }
+fn style_border() -> Style   { Style::default().fg(Color::Cyan) }
+fn style_title() -> Style    { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) }
+fn style_dim() -> Style      { Style::default().fg(Color::DarkGray) }
+fn style_selected() -> Style { Style::default().add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD) }
+fn style_done() -> Style     { Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM) }
+fn style_checked() -> Style  { Style::default().fg(Color::Green).add_modifier(Modifier::DIM) }
+fn style_key() -> Style      { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) }
+fn style_input() -> Style    { Style::default().fg(Color::Blue) }
+fn style_success() -> Style  { Style::default().fg(Color::Green) }
+fn style_error() -> Style    { Style::default().fg(Color::Red) }
+fn style_highlight() -> Style { Style::default().add_modifier(Modifier::REVERSED) }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
     if app.mode == Mode::Hidden {
         let area = f.area();
-        // tiny pill hint in top-right
         let hint_rect = Rect::new(area.width.saturating_sub(24), 0, 24, 1);
         f.render_widget(
-            Paragraph::new(Span::styled(
-                " notes  ^Space ",
-                style_dim(),
-            )),
+            Paragraph::new(Span::styled(" notes  ^Space ", style_dim())),
             hint_rect,
         );
         return;
@@ -345,9 +340,9 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let rect = sticky_rect(area);
     f.render_widget(Clear, rect);
 
-    // outer panel
-    let note_count = app.notes.len();
-    let panel_title = format!(" notes ({note_count}) ");
+    let done_count  = app.notes.iter().filter(|n| n.done).count();
+    let total_count = app.notes.len();
+    let panel_title = format!(" notes {done_count}/{total_count} ");
     let outer = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -360,13 +355,15 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     f.render_widget(outer, rect);
 
     match &app.mode {
-        Mode::List => render_list(f, app, inner),
-        Mode::View => render_view(f, app, inner),
-        Mode::AddTitle | Mode::EditTitle => render_input_title(f, app, inner),
-        Mode::AddBody | Mode::EditBody => render_input_body(f, app, inner),
+        Mode::List          => render_list(f, app, inner),
+        Mode::View          => render_view(f, app, inner),
+        Mode::AddTitle
+        | Mode::EditTitle   => render_input_title(f, app, inner),
+        Mode::AddBody
+        | Mode::EditBody    => render_input_body(f, app, inner),
         Mode::ConfirmDelete => render_confirm(f, app, inner),
-        Mode::Help => render_help(f, inner),
-        Mode::Hidden => {}
+        Mode::Help          => render_help(f, inner),
+        Mode::Hidden        => {}
     }
 }
 
@@ -380,50 +377,51 @@ fn render_list(f: &mut ratatui::Frame, app: &App, area: Rect) {
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(""),
-                Line::from(Span::styled(
-                    "  No notes yet.",
-                    style_dim(),
-                )),
-                Line::from(Span::styled(
-                    "  Press a to create one.",
-                    style_dim(),
-                )),
-            ])
-            .style(style_base()),
+                Line::from(Span::styled("  No notes yet.", style_dim())),
+                Line::from(Span::styled("  Press a to add one.", style_dim())),
+            ]),
             chunks[0],
         );
     } else {
-        let items: Vec<ListItem> = app
-            .notes
-            .iter()
-            .map(|n| {
-                let mut spans = vec![];
+        let items: Vec<ListItem> = app.notes.iter().map(|n| {
+            // note-level status badge: [x] done, [ ] pending
+            let (badge, badge_style) = if n.done {
+                ("[x] ", Style::default().fg(Color::Green).add_modifier(Modifier::DIM))
+            } else {
+                ("[ ] ", style_dim())
+            };
 
-                // todo progress badge
-                if let Some((done, total)) = todo_progress(&n.body) {
-                    let badge = format!("[{done}/{total}] ");
-                    let badge_style = if done == total {
-                        style_checked()
-                    } else {
-                        Style::default().fg(Color::Yellow)
-                    };
-                    spans.push(Span::styled(badge, badge_style));
-                }
+            let title_style = if n.done { style_done() } else { style_base() };
 
-                // title
-                let max_title = (area.width as usize).saturating_sub(
-                    spans.iter().map(|s| s.content.len()).sum::<usize>() + 2,
-                );
-                let title = if n.title.len() > max_title {
-                    format!("{}…", &n.title[..max_title.saturating_sub(1)])
+            // optional todo-items progress
+            let progress = todo_progress(&n.body).map(|(d, t)| {
+                let s = format!(" {d}/{t}");
+                let ps = if d == t {
+                    Style::default().fg(Color::Green).add_modifier(Modifier::DIM)
                 } else {
-                    n.title.clone()
+                    Style::default().fg(Color::Yellow)
                 };
-                spans.push(Span::raw(title));
+                Span::styled(s, ps)
+            });
 
-                ListItem::new(Line::from(spans))
-            })
-            .collect();
+            let used = badge.len() + progress.as_ref().map(|p| p.content.len()).unwrap_or(0) + 2;
+            let max_t = (area.width as usize).saturating_sub(used);
+            let title = if n.title.len() > max_t {
+                format!("{}…", &n.title[..max_t.saturating_sub(1)])
+            } else {
+                n.title.clone()
+            };
+
+            let mut spans = vec![
+                Span::styled(badge, badge_style),
+                Span::styled(title, title_style),
+            ];
+            if let Some(p) = progress {
+                spans.push(p);
+            }
+
+            ListItem::new(Line::from(spans))
+        }).collect();
 
         let list = List::new(items)
             .style(style_base())
@@ -433,28 +431,23 @@ fn render_list(f: &mut ratatui::Frame, app: &App, area: Rect) {
         f.render_stateful_widget(list, chunks[0], &mut app.list_state.clone());
     }
 
-    // footer hints
     let footer = if !app.status_msg.is_empty() {
         let sty = if app.status_msg.contains("deleted") || app.status_msg.contains("empty") {
             style_error()
+        } else if app.status_msg.contains("complete") {
+            style_success()
         } else {
             style_success()
         };
         Line::from(Span::styled(app.status_msg.as_str(), sty))
     } else {
         Line::from(vec![
-            Span::styled("a", style_key()),
-            Span::styled("dd ", style_dim()),
-            Span::styled("e", style_key()),
-            Span::styled("dit ", style_dim()),
-            Span::styled("d", style_key()),
-            Span::styled("el ", style_dim()),
-            Span::styled("↵", style_key()),
-            Span::styled("view ", style_dim()),
-            Span::styled("?", style_key()),
-            Span::styled("help ", style_dim()),
-            Span::styled("h", style_key()),
-            Span::styled("ide", style_dim()),
+            Span::styled("a", style_key()), Span::styled("dd ", style_dim()),
+            Span::styled("e", style_key()), Span::styled("dit ", style_dim()),
+            Span::styled("x", style_key()), Span::styled(" done ", style_dim()),
+            Span::styled("d", style_key()), Span::styled("el ", style_dim()),
+            Span::styled("↵", style_key()), Span::styled("view ", style_dim()),
+            Span::styled("?", style_key()), Span::styled("help", style_dim()),
         ])
     };
     f.render_widget(Paragraph::new(footer), chunks[1]);
@@ -466,104 +459,84 @@ fn render_view(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let body_lines: Vec<&str> = note.body.lines().collect();
     let has_todos = body_lines.iter().any(|l| is_todo(l));
 
-    // header: title + date
-    let header_height = 2u16;
-    let footer_height = 1u16;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(header_height),
-            Constraint::Min(1),
-            Constraint::Length(footer_height),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(1), Constraint::Length(1)])
         .split(area);
 
-    // title row with optional progress
-    let mut title_spans = vec![Span::styled(
-        note.title.as_str(),
-        Style::default().fg(Color::Reset).add_modifier(Modifier::BOLD),
-    )];
-    if let Some((done, total)) = todo_progress(&note.body) {
-        let prog = format!("  {done}/{total}");
-        let sty = if done == total { style_checked() } else { Style::default().fg(Color::Yellow) };
-        title_spans.push(Span::styled(prog, sty));
+    // ── header ──
+    let status_badge = if note.done {
+        Span::styled("[x] ", Style::default().fg(Color::Green))
+    } else {
+        Span::styled("[ ] ", style_dim())
+    };
+    let title_style = if note.done {
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    };
+
+    let mut title_line = vec![status_badge, Span::styled(note.title.as_str(), title_style)];
+    if let Some((d, t)) = todo_progress(&note.body) {
+        let sty = if d == t { style_checked() } else { Style::default().fg(Color::Yellow) };
+        title_line.push(Span::styled(format!("  {d}/{t}"), sty));
     }
 
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(title_spans),
+            Line::from(title_line),
             Line::from(Span::styled(note.created_at.as_str(), style_dim())),
+            Line::from(Span::styled(
+                if note.done { "  complete" } else { "  incomplete" },
+                if note.done { Style::default().fg(Color::Green).add_modifier(Modifier::DIM) }
+                else { style_dim() },
+            )),
         ]),
         chunks[0],
     );
 
-    // body lines
-    let rendered_lines: Vec<Line> = body_lines
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            let is_cursor = i == app.view_line;
-            if is_todo_checked(line) {
-                let text = line.trim_start_matches("- [x] ").trim_start_matches("- [X] ");
-                let spans = vec![
-                    Span::styled(" [x] ", style_checked()),
-                    Span::styled(text, style_checked()),
-                ];
-                if is_cursor {
-                    Line::from(spans).style(style_highlight_line())
-                } else {
-                    Line::from(spans)
-                }
-            } else if is_todo_unchecked(line) {
-                let text = line.trim_start_matches("- [ ] ");
-                let spans = vec![
-                    Span::styled(" [ ] ", style_unchecked()),
-                    Span::raw(text),
-                ];
-                if is_cursor {
-                    Line::from(spans).style(style_highlight_line())
-                } else {
-                    Line::from(spans)
-                }
-            } else {
-                let l = Line::from(Span::raw(*line));
-                if is_cursor && has_todos {
-                    l.style(style_highlight_line())
-                } else {
-                    l
-                }
-            }
-        })
-        .collect();
+    // ── body ──
+    let rendered: Vec<Line> = body_lines.iter().enumerate().map(|(i, line)| {
+        let cursor = i == app.view_line;
+        if is_todo_checked(line) {
+            let text = line.trim_start_matches("- [x] ").trim_start_matches("- [X] ");
+            let l = Line::from(vec![
+                Span::styled(" [x] ", style_checked()),
+                Span::styled(text, style_checked()),
+            ]);
+            if cursor { l.style(style_highlight()) } else { l }
+        } else if is_todo_unchecked(line) {
+            let text = line.trim_start_matches("- [ ] ");
+            let l = Line::from(vec![
+                Span::styled(" [ ] ", style_dim()),
+                Span::raw(text),
+            ]);
+            if cursor { l.style(style_highlight()) } else { l }
+        } else {
+            let l = Line::from(Span::raw(*line));
+            if cursor && has_todos { l.style(style_highlight()) } else { l }
+        }
+    }).collect();
 
     f.render_widget(
-        Paragraph::new(rendered_lines).wrap(Wrap { trim: false }),
+        Paragraph::new(rendered).wrap(Wrap { trim: false }),
         chunks[1],
     );
 
-    // footer
-    let footer = if has_todos {
-        Line::from(vec![
-            Span::styled("↑↓", style_key()),
-            Span::styled(" nav  ", style_dim()),
-            Span::styled("Space", style_key()),
-            Span::styled(" toggle  ", style_dim()),
-            Span::styled("e", style_key()),
-            Span::styled("dit  ", style_dim()),
-            Span::styled("Esc", style_key()),
-            Span::styled(" back", style_dim()),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled("Esc", style_key()),
-            Span::styled(" back  ", style_dim()),
-            Span::styled("e", style_key()),
-            Span::styled("dit  ", style_dim()),
-            Span::styled("d", style_key()),
-            Span::styled("el", style_dim()),
-        ])
-    };
-    f.render_widget(Paragraph::new(footer), chunks[2]);
+    // ── footer ──
+    let mut footer_spans = vec![
+        Span::styled("x", style_key()),
+        Span::styled(" toggle done  ", style_dim()),
+    ];
+    if has_todos {
+        footer_spans.push(Span::styled("Space", style_key()));
+        footer_spans.push(Span::styled(" check  ", style_dim()));
+    }
+    footer_spans.push(Span::styled("e", style_key()));
+    footer_spans.push(Span::styled("dit  ", style_dim()));
+    footer_spans.push(Span::styled("Esc", style_key()));
+    footer_spans.push(Span::styled(" back", style_dim()));
+    f.render_widget(Paragraph::new(Line::from(footer_spans)), chunks[2]);
 }
 
 fn render_input_title(f: &mut ratatui::Frame, app: &App, area: Rect) {
@@ -577,26 +550,20 @@ fn render_input_title(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let blk = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(Span::styled(label, style_input_active()))
-        .border_style(style_input_active());
+        .title(Span::styled(label, style_input()))
+        .border_style(style_input());
     let inner = blk.inner(chunks[0]);
     f.render_widget(blk, chunks[0]);
-    // scroll text left so cursor is always visible
+
     let w = inner.width as usize;
-    let visible = if app.input.len() >= w {
-        &app.input[app.input.len() + 1 - w..]
-    } else {
-        &app.input
-    };
+    let visible = if app.input.len() >= w { &app.input[app.input.len() + 1 - w..] } else { &app.input };
     f.render_widget(Paragraph::new(visible), inner);
     f.set_cursor_position((inner.x + visible.len().min(w) as u16, inner.y));
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("Enter", style_key()),
-            Span::styled(" next    ", style_dim()),
-            Span::styled("Esc", style_key()),
-            Span::styled(" cancel", style_dim()),
+            Span::styled("Enter", style_key()), Span::styled(" next  ", style_dim()),
+            Span::styled("Esc", style_key()),   Span::styled(" cancel", style_dim()),
         ])),
         chunks[1],
     );
@@ -613,8 +580,8 @@ fn render_input_body(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let blk = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(Span::styled(label, style_input_active()))
-        .border_style(style_input_active());
+        .title(Span::styled(label, style_input()))
+        .border_style(style_input());
     let inner = blk.inner(chunks[0]);
     f.render_widget(blk, chunks[0]);
     f.render_widget(
@@ -628,15 +595,10 @@ fn render_input_body(f: &mut ratatui::Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled("Ctrl+S", style_key()),
-                Span::styled(" save    ", style_dim()),
-                Span::styled("Esc", style_key()),
-                Span::styled(" cancel", style_dim()),
+                Span::styled("Ctrl+S", style_key()), Span::styled(" save  ", style_dim()),
+                Span::styled("Esc", style_key()),    Span::styled(" cancel", style_dim()),
             ]),
-            Line::from(Span::styled(
-                "Tip: - [ ] task  or  - [x] done",
-                style_dim(),
-            )),
+            Line::from(Span::styled("Tip: - [ ] task   - [x] done", style_dim())),
         ]),
         chunks[1],
     );
@@ -653,12 +615,9 @@ fn render_confirm(f: &mut ratatui::Frame, app: &App, area: Rect) {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  y", style_key()),
-                Span::styled(" yes    ", style_dim()),
-                Span::styled("n", style_key()),
-                Span::styled(" / ", style_dim()),
-                Span::styled("Esc", style_key()),
-                Span::styled(" no", style_dim()),
+                Span::styled("  y", style_key()), Span::styled(" yes    ", style_dim()),
+                Span::styled("n", style_key()),   Span::styled("/", style_dim()),
+                Span::styled("Esc", style_key()), Span::styled(" no", style_dim()),
             ]),
         ])
         .wrap(Wrap { trim: true }),
@@ -674,29 +633,31 @@ fn render_help(f: &mut ratatui::Frame, area: Rect) {
         Line::from(Span::styled(" Shortcuts", h)),
         Line::from(""),
         Line::from(Span::styled(" List", h)),
-        Line::from(vec![Span::styled("  a", k), Span::styled("   add note", d)]),
-        Line::from(vec![Span::styled("  e", k), Span::styled("   edit", d)]),
-        Line::from(vec![Span::styled("  d", k), Span::styled("   delete", d)]),
-        Line::from(vec![Span::styled("  ↵", k), Span::styled("   view note", d)]),
-        Line::from(vec![Span::styled("  j/k ↑↓", k), Span::styled("  navigate", d)]),
-        Line::from(vec![Span::styled("  h", k), Span::styled("   hide panel", d)]),
-        Line::from(vec![Span::styled("  q", k), Span::styled("   quit", d)]),
+        Line::from(vec![Span::styled("  a", k),      Span::styled("        add note", d)]),
+        Line::from(vec![Span::styled("  e", k),      Span::styled("        edit", d)]),
+        Line::from(vec![Span::styled("  x", k),      Span::styled("        toggle done", d)]),
+        Line::from(vec![Span::styled("  d", k),      Span::styled("        delete", d)]),
+        Line::from(vec![Span::styled("  ↵", k),      Span::styled("        view note", d)]),
+        Line::from(vec![Span::styled("  j/k ↑↓", k), Span::styled("   navigate", d)]),
+        Line::from(vec![Span::styled("  h", k),      Span::styled("        hide", d)]),
+        Line::from(vec![Span::styled("  q / Esc", k),Span::styled("   quit", d)]),
         Line::from(""),
         Line::from(Span::styled(" View", h)),
-        Line::from(vec![Span::styled("  Space", k), Span::styled(" toggle checkbox", d)]),
-        Line::from(vec![Span::styled("  e", k), Span::styled("     edit note", d)]),
-        Line::from(vec![Span::styled("  Esc", k), Span::styled("   back", d)]),
+        Line::from(vec![Span::styled("  x", k),     Span::styled("     toggle done", d)]),
+        Line::from(vec![Span::styled("  Space", k), Span::styled("  toggle checkbox", d)]),
+        Line::from(vec![Span::styled("  ↑↓", k),    Span::styled("    navigate lines", d)]),
+        Line::from(vec![Span::styled("  e", k),     Span::styled("     edit", d)]),
+        Line::from(vec![Span::styled("  Esc", k),   Span::styled("   back", d)]),
         Line::from(""),
         Line::from(Span::styled(" Edit", h)),
         Line::from(vec![Span::styled("  Ctrl+S", k), Span::styled(" save", d)]),
-        Line::from(vec![Span::styled("  Esc", k), Span::styled("    cancel", d)]),
+        Line::from(vec![Span::styled("  Esc", k),    Span::styled("    cancel", d)]),
         Line::from(""),
         Line::from(Span::styled(" Anywhere", h)),
         Line::from(vec![Span::styled("  ^Space", k), Span::styled(" show/hide", d)]),
         Line::from(""),
         Line::from(Span::styled(" Checkboxes in body:", h)),
-        Line::from(Span::styled("  - [ ] pending", d)),
-        Line::from(Span::styled("  - [x] done", d)),
+        Line::from(Span::styled("  - [ ] pending  - [x] done", d)),
     ];
     f.render_widget(Paragraph::new(help).wrap(Wrap { trim: false }), area);
 }
@@ -708,7 +669,6 @@ fn handle_events(app: &mut App) -> io::Result<bool> {
         return Ok(false);
     }
     if let Event::Key(key) = event::read()? {
-        // Ctrl+Space: global show/hide
         if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if app.mode == Mode::Hidden {
                 app.mode = app.prev_mode.clone();
@@ -725,15 +685,11 @@ fn handle_events(app: &mut App) -> io::Result<bool> {
             Mode::List => match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
                 KeyCode::Char('?') => app.mode = Mode::Help,
-                KeyCode::Char('h') => {
-                    app.prev_mode = Mode::List;
-                    app.mode = Mode::Hidden;
-                }
+                KeyCode::Char('h') => { app.prev_mode = Mode::List; app.mode = Mode::Hidden; }
                 KeyCode::Up | KeyCode::Char('k') => {
                     if !app.notes.is_empty() {
                         let i = app.list_state.selected().unwrap_or(0);
-                        app.list_state
-                            .select(Some(if i == 0 { app.notes.len() - 1 } else { i - 1 }));
+                        app.list_state.select(Some(if i == 0 { app.notes.len() - 1 } else { i - 1 }));
                     }
                     app.status_msg.clear();
                 }
@@ -751,33 +707,25 @@ fn handle_events(app: &mut App) -> io::Result<bool> {
                     }
                 }
                 KeyCode::Char('a') => {
-                    app.temp_title.clear();
-                    app.temp_body.clear();
-                    app.input.clear();
+                    app.temp_title.clear(); app.temp_body.clear(); app.input.clear();
                     app.mode = Mode::AddTitle;
                 }
                 KeyCode::Char('e') => {
                     let data = app.selected().map(|n| (n.title.clone(), n.body.clone()));
                     if let Some((title, body)) = data {
-                        app.temp_title = title.clone();
-                        app.temp_body = body;
-                        app.input = title;
-                        app.mode = Mode::EditTitle;
+                        app.temp_title = title.clone(); app.temp_body = body;
+                        app.input = title; app.mode = Mode::EditTitle;
                     }
                 }
+                KeyCode::Char('x') => app.toggle_done(),
                 KeyCode::Char('d') => {
-                    if app.selected().is_some() {
-                        app.mode = Mode::ConfirmDelete;
-                    }
+                    if app.selected().is_some() { app.mode = Mode::ConfirmDelete; }
                 }
                 _ => {}
             },
 
             Mode::View => {
-                let body_len = app
-                    .selected()
-                    .map(|n| n.body.lines().count())
-                    .unwrap_or(0);
+                let body_len = app.selected().map(|n| n.body.lines().count()).unwrap_or(0);
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => app.mode = Mode::List,
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -788,46 +736,34 @@ fn handle_events(app: &mut App) -> io::Result<bool> {
                             app.view_line += 1;
                         }
                     }
-                    KeyCode::Char(' ') => {
-                        app.toggle_view_line();
-                    }
+                    KeyCode::Char(' ') => app.toggle_view_line(),
+                    KeyCode::Char('x') => app.toggle_done(),
                     KeyCode::Char('e') => {
                         let data = app.selected().map(|n| (n.title.clone(), n.body.clone()));
                         if let Some((title, body)) = data {
-                            app.temp_title = title.clone();
-                            app.temp_body = body;
-                            app.input = title;
-                            app.mode = Mode::EditTitle;
+                            app.temp_title = title.clone(); app.temp_body = body;
+                            app.input = title; app.mode = Mode::EditTitle;
                         }
                     }
                     KeyCode::Char('d') => {
-                        if app.selected().is_some() {
-                            app.mode = Mode::ConfirmDelete;
-                        }
+                        if app.selected().is_some() { app.mode = Mode::ConfirmDelete; }
                     }
                     _ => {}
                 }
             }
 
             Mode::AddTitle | Mode::EditTitle => match key.code {
-                KeyCode::Esc => {
-                    app.mode = Mode::List;
-                    app.input.clear();
-                }
+                KeyCode::Esc => { app.mode = Mode::List; app.input.clear(); }
                 KeyCode::Enter => {
                     if app.mode == Mode::AddTitle {
                         app.temp_title = app.input.trim().to_string();
-                        app.input.clear();
-                        app.mode = Mode::AddBody;
+                        app.input.clear(); app.mode = Mode::AddBody;
                     } else {
                         app.temp_title = app.input.trim().to_string();
-                        app.input = app.temp_body.clone();
-                        app.mode = Mode::EditBody;
+                        app.input = app.temp_body.clone(); app.mode = Mode::EditBody;
                     }
                 }
-                KeyCode::Backspace => {
-                    app.input.pop();
-                }
+                KeyCode::Backspace => { app.input.pop(); }
                 KeyCode::Char(c) => app.input.push(c),
                 _ => {}
             },
@@ -835,25 +771,16 @@ fn handle_events(app: &mut App) -> io::Result<bool> {
             Mode::AddBody | Mode::EditBody => {
                 if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if app.mode == Mode::AddBody {
-                        app.temp_body = app.input.clone();
-                        app.input.clear();
-                        app.add_note();
+                        app.temp_body = app.input.clone(); app.input.clear(); app.add_note();
                     } else {
-                        app.temp_body = app.input.clone();
-                        app.input.clear();
-                        app.save_edit();
+                        app.temp_body = app.input.clone(); app.input.clear(); app.save_edit();
                     }
                 } else {
                     match key.code {
-                        KeyCode::Esc => {
-                            app.mode = Mode::List;
-                            app.input.clear();
-                        }
-                        KeyCode::Enter => app.input.push('\n'),
-                        KeyCode::Backspace => {
-                            app.input.pop();
-                        }
-                        KeyCode::Char(c) => app.input.push(c),
+                        KeyCode::Esc => { app.mode = Mode::List; app.input.clear(); }
+                        KeyCode::Enter     => app.input.push('\n'),
+                        KeyCode::Backspace => { app.input.pop(); }
+                        KeyCode::Char(c)   => app.input.push(c),
                         _ => {}
                     }
                 }
@@ -866,9 +793,7 @@ fn handle_events(app: &mut App) -> io::Result<bool> {
             },
 
             Mode::Help => match key.code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
-                    app.mode = Mode::List;
-                }
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.mode = Mode::List,
                 _ => {}
             },
         }
@@ -887,11 +812,7 @@ fn main() -> io::Result<()> {
     let mut app = App::new();
     let result = run(&mut terminal, &mut app);
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     result
 }
@@ -899,9 +820,7 @@ fn main() -> io::Result<()> {
 fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, app))?;
-        if handle_events(app)? {
-            break;
-        }
+        if handle_events(app)? { break; }
     }
     Ok(())
 }

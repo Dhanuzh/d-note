@@ -1,6 +1,6 @@
 [package]
 name = "d-note"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "A terminal sticky note app — top-right panel with todos, show/hide, stored in ~/notes.md"
 license = "MIT"
