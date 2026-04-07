@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# dnote — open d-note as a floating overlay in any terminal
+
+TITLE="d-note"
+W=52   # cols  (~400px)
+H=34   # rows  (~500px)
+
+# ── tmux ──────────────────────────────────────────────────────────────────────
+# True floating popup anchored to top-right
+if [ -n "$TMUX" ]; then
+    tmux popup \
+        -x "#{window_width}" \
+        -y 0 \
+        -w $W \
+        -h $H \
+        -E "d-note"
+    exit 0
+fi
+
+# ── kitty ─────────────────────────────────────────────────────────────────────
+# True overlay on top of the current kitty window
+if [ -n "$KITTY_WINDOW_ID" ]; then
+    kitty @ launch \
+        --type=overlay \
+        --title="$TITLE" \
+        d-note
+    exit 0
+fi
+
+# ── zellij ────────────────────────────────────────────────────────────────────
+# Floating pane (true overlay)
+if [ -n "$ZELLIJ" ]; then
+    zellij action new-pane \
+        --floating \
+        --name "$TITLE" \
+        -- d-note
+    exit 0
+fi
+
+# ── wezterm ───────────────────────────────────────────────────────────────────
+if [ "$TERM_PROGRAM" = "WezTerm" ] || [ -n "$WEZTERM_PANE" ]; then
+    wezterm cli spawn --new-window -- d-note &
+    exit 0
+fi
+
+# ── foot (Wayland) ────────────────────────────────────────────────────────────
+if [ "$TERM" = "foot" ] && command -v foot &>/dev/null; then
+    foot --title="$TITLE" --app-id="floating" d-note &
+    exit 0
+fi
+
+# ── X11 / generic: open a new terminal window positioned top-right ─────────────
+# -0+0 geometry = right-edge, top-edge
+
+if command -v xterm &>/dev/null && [ -n "$DISPLAY" ]; then
+    xterm \
+        -geometry "${W}x${H}-0+0" \
+        -title "$TITLE" \
+        -fa "Monospace" -fs 10 \
+        -bg "#0d1117" -fg "#c9d1d9" \
+        -e d-note &
+    exit 0
+fi
+
+if command -v alacritty &>/dev/null; then
+    alacritty --title "$TITLE" --command d-note &
+    exit 0
+fi
+
+if command -v gnome-terminal &>/dev/null; then
+    gnome-terminal --geometry="${W}x${H}" --title="$TITLE" -- d-note &
+    exit 0
+fi
+
+if command -v konsole &>/dev/null; then
+    konsole --geometry 420x540 --title "$TITLE" -e d-note &
+    exit 0
+fi
+
+if command -v xfce4-terminal &>/dev/null; then
+    xfce4-terminal --geometry="${W}x${H}" --title="$TITLE" -e "d-note" &
+    exit 0
+fi
+
+# ── nothing found ─────────────────────────────────────────────────────────────
+echo ""
+echo "dnote: no supported terminal multiplexer or emulator found."
+echo ""
+echo "For a true floating overlay, install one of:"
+echo "  tmux    → sudo apt install tmux"
+echo "  kitty   → https://sw.kovidgoyal.net/kitty"
+echo "  zellij  → https://zellij.dev"
+echo ""
+echo "Running d-note directly (takes over this terminal)..."
+sleep 2
+d-note

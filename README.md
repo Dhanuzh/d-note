@@ -15,6 +15,39 @@ cargo install d-note
 d-note
 ```
 
+To keep your terminal free while d-note floats above it, use the `dnote` wrapper (see below).
+
+## Floating popup (recommended)
+
+The `dnote` wrapper opens d-note as a **floating overlay** so your terminal stays usable underneath.
+
+**Install the wrapper:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/d-note/main/scripts/dnote \
+  -o ~/.local/bin/dnote && chmod +x ~/.local/bin/dnote
+```
+
+**Then use `dnote` instead of `d-note`.**
+
+It auto-detects your environment:
+
+| Environment | Behavior |
+|---|---|
+| tmux | Floating popup (top-right) |
+| kitty | Native overlay (`launch --type=overlay`) |
+| zellij | Native floating pane |
+| wezterm | New window |
+| xterm / X11 | New window anchored top-right |
+| alacritty, gnome-terminal, konsole | New window |
+
+**tmux keybinding** — open d-note with `Prefix + n`:
+
+```bash
+echo "bind n run-shell 'tmux popup -x #{window_width} -y 0 -w 52 -h 34 -E d-note'" >> ~/.tmux.conf
+tmux source-file ~/.tmux.conf
+```
+
 ## Keys
 
 | Key | Action |
